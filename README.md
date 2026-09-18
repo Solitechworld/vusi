@@ -46,6 +46,20 @@ Around those:
 - **JSON or CSV in**, human-readable or JSON out; batch a folder or watch one
   continuously (GUI).
 
+## Added in this fork
+
+Upstream [oritwoen/vusi](https://github.com/oritwoen/vusi) is the CLI, library,
+and the three attack engines. This fork builds a product around that core:
+
+- **Native Metal GUI** (`gui/`) — a GPU-rendered desktop front-end (wgpu →
+  Metal on Apple Silicon / T2), with batch-folder processing, continuous file
+  watching, and autosave. Analysis runs off the UI thread.
+- **`vusi-engine`** — a UI-agnostic analysis crate the GUI drives, so the
+  interface layer only handles pixels and the results match the CLI exactly.
+- **Bitcoin transaction extraction** — pull `(r, s, z, pubkey)` from a raw
+  Bitcoin transaction (DER parse + sighash derivation) and feed it straight in.
+- **macOS `.app` packaging** — `bundle-macos.sh` and a double-clickable bundle.
+
 ## Installation
 
 ```bash
