@@ -51,6 +51,18 @@ pub enum Command {
         cfg: AnalysisConfig,
         autosave_dir: Option<PathBuf>,
     },
+    /// Fetch every spent transaction for one or more addresses via the bundled
+    /// ATXQU tool, extract (r,s,z,pubkey), and analyze — the full pipeline.
+    FetchAddress {
+        addresses: Vec<String>,
+        provider: String,
+        endpoint: String,
+        parallel: bool,
+        workers: usize,
+        only_verified: bool,
+        cfg: AnalysisConfig,
+        autosave_dir: Option<PathBuf>,
+    },
     /// Begin watching a file; re-analyze whenever its contents change.
     StartWatch {
         path: PathBuf,
@@ -183,6 +195,30 @@ fn worker_loop(rx: Receiver<Command>, tx: Sender<WorkerEvent>, ctx: egui::Contex
             }) => {
                 emit(WorkerEvent::Busy(true));
                 run_extract(&path, only_verified, &cfg, autosave_dir.as_deref(), &emit);
+                emit(WorkerEvent::Busy(false));
+            }
+            Ok(Command::FetchAddress {
+                addresses,
+                provider,
+                endpoint,
+                parallel,
+                workers,
+                only_verified,
+                cfg,
+                autosave_dir,
+            }) => {
+                emit(WorkerEvent::Busy(true));
+                run_fetch(
+                    &addresses,
+                    &provider,
+                    &endpoint,
+                    parallel,
+                    workers,
+                    only_verified,
+                    &cfg,
+                    autosave_dir.as_deref(),
+                    &emit,
+                );
                 emit(WorkerEvent::Busy(false));
             }
             Ok(Command::StartWatch {
@@ -339,7 +375,21 @@ fn run_extract<F: Fn(WorkerEvent)>(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.display().to_string());
 
-    let ex = match extract_from_tx_json(&content) {
+    analyze_extraction(&content, &source, only_verified, cfg, autosave_dir, emit);
+}
+
+/// Extract (r,s,z,pubkey) from raw transaction JSON `content`, surface a
+/// summary, load the tuples into the UI, and analyze them. Shared by the
+/// file-extract path and the ATXQU address-fetch path.
+fn analyze_extraction<F: Fn(WorkerEvent)>(
+    content: &str,
+    source: &str,
+    only_verified: bool,
+    cfg: &AnalysisConfig,
+    autosave_dir: Option<&Path>,
+    emit: &F,
+) {
+    let ex = match extract_from_tx_json(content) {
         Ok(ex) => ex,
         Err(e) => {
             emit(WorkerEvent::Log(LogLevel::Error, format!("Extraction failed: {e}")));
@@ -379,7 +429,7 @@ fn run_extract<F: Fn(WorkerEvent)>(
     // Load the extracted tuples into the UI input box.
     emit(WorkerEvent::Extracted {
         json: json.clone(),
-        source: source.clone(),
+        source: source.to_string(),
     });
 
     if used == 0 {
@@ -394,7 +444,126 @@ fn run_extract<F: Fn(WorkerEvent)>(
         LogLevel::Info,
         format!("Analyzing {} extracted signature(s)…", used),
     ));
-    run_text(&json, &source, cfg, autosave_dir, emit);
+    run_text(&json, source, cfg, autosave_dir, emit);
+}
+
+/// Locate the bundled `atxqu/atxqu_cli.py`. Honours `VUSI_ATXQU_CLI`, then
+/// searches next to the current dir and up from the executable (so it works
+/// from `cargo run` and from the app bundle / release layout alike).
+fn find_atxqu_cli() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("VUSI_ATXQU_CLI") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let rel = Path::new("atxqu").join("atxqu_cli.py");
+    // Inside a macOS .app: Contents/MacOS/<exe> → Contents/Resources/atxqu/…
+    let rel_res = Path::new("Resources").join("atxqu").join("atxqu_cli.py");
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(&rel));
+        candidates.push(cwd.join("..").join(&rel));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        for _ in 0..6 {
+            if let Some(d) = dir {
+                candidates.push(d.join(&rel)); // dev / release layout
+                candidates.push(d.join(&rel_res)); // app-bundle layout
+                dir = d.parent().map(|p| p.to_path_buf());
+            } else {
+                break;
+            }
+        }
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// The ATXQU pipeline: run the bundled fetcher for the given address(es),
+/// capture its normalized-transaction JSON, then extract + analyze.
+#[allow(clippy::too_many_arguments)]
+fn run_fetch<F: Fn(WorkerEvent)>(
+    addresses: &[String],
+    provider: &str,
+    endpoint: &str,
+    parallel: bool,
+    workers: usize,
+    only_verified: bool,
+    cfg: &AnalysisConfig,
+    autosave_dir: Option<&Path>,
+    emit: &F,
+) {
+    if addresses.is_empty() {
+        emit(WorkerEvent::Log(LogLevel::Warn, "No address to fetch.".into()));
+        return;
+    }
+    let Some(cli) = find_atxqu_cli() else {
+        emit(WorkerEvent::Log(
+            LogLevel::Error,
+            "Could not find atxqu/atxqu_cli.py. Run from the repo, or set VUSI_ATXQU_CLI to its path.".into(),
+        ));
+        return;
+    };
+    let python = std::env::var("VUSI_PYTHON").unwrap_or_else(|_| "python3".to_string());
+
+    let mut cmd = std::process::Command::new(&python);
+    cmd.arg(&cli);
+    for a in addresses {
+        cmd.arg(a);
+    }
+    cmd.arg("--provider").arg(provider);
+    cmd.arg("--endpoint").arg(endpoint);
+    if parallel {
+        cmd.arg("--parallel").arg("--workers").arg(workers.to_string());
+    }
+    // Run in the script's own dir so its `import engine` resolves.
+    if let Some(dir) = cli.parent() {
+        cmd.current_dir(dir);
+    }
+
+    emit(WorkerEvent::Log(
+        LogLevel::Info,
+        format!(
+            "ATXQU: fetching {} address(es) via {} ({})…",
+            addresses.len(),
+            provider,
+            endpoint
+        ),
+    ));
+
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => {
+            emit(WorkerEvent::Log(
+                LogLevel::Error,
+                format!("Failed to launch '{python}' for ATXQU: {e}. Is Python 3 installed?"),
+            ));
+            return;
+        }
+    };
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let last = err.trim().lines().last().unwrap_or("unknown error");
+        emit(WorkerEvent::Log(
+            LogLevel::Error,
+            format!("ATXQU fetch failed: {last}"),
+        ));
+        return;
+    }
+
+    // Surface the fetcher's progress tail (it logs to stderr).
+    let err = String::from_utf8_lossy(&output.stderr);
+    for line in err.trim().lines().rev().take(2).collect::<Vec<_>>().into_iter().rev() {
+        if !line.is_empty() {
+            emit(WorkerEvent::Log(LogLevel::Info, format!("  atxqu: {line}")));
+        }
+    }
+
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+    let source = format!("atxqu:{}", addresses.join(","));
+    analyze_extraction(&content, &source, only_verified, cfg, autosave_dir, emit);
 }
 
 fn run_batch<F: Fn(WorkerEvent)>(

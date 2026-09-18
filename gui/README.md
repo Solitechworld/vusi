@@ -71,12 +71,13 @@ cargo run -p vusi-gui --release --no-default-features
 
 | Control | What it does |
 |---|---|
-| **FILE / PASTE** | Choose whether input comes from a file or a pasted JSON/CSV blob. |
+| **FILE / PASTE / ADDRESS** | Choose whether input comes from a file, a pasted JSON/CSV blob, or a live address scan. |
 | **LOAD FILE…** | Native file picker for a `.json` / `.csv` signature set. |
+| **ADDRESS mode** | Type a Bitcoin address (or several, separated by space/comma/newline); on **RUN** the app calls the bundled **ATXQU** fetcher to pull every *spent* transaction, extracts `(r, s, z, pubkey)`, and runs the selected attack — the whole pipeline in one window. Choose the provider/endpoint (and optional parallel workers); needs Python 3 and network access to the endpoint. |
 | **⛏ EXTRACT FROM TX…** | Pick a raw Bitcoin transaction JSON; the app pulls `(r, s, z, pubkey)` from every input, loads them into the box, and analyzes automatically. |
-| **verified only** | Keep only signatures that verify against the recomputed sighash (recommended). |
+| **verified only** | Keep only signatures that verify against the recomputed sighash (recommended); also applies to ADDRESS-mode results. |
 | **⤓ SAVE JSON** | Save the last extracted `r,s,z` set to a file. |
-| **ATTACK VECTOR** | Pick Nonce Reuse, Polynonce, or Biased Nonce; the relevant parameters appear inline. |
+| **ATTACK VECTOR** | Pick any of the nine attacks (Nonce Reuse, Shared Nonce, Reuse-R, Delta Bias, Bitflip, GCD, Polynonce, Biased Nonce, Nonce Bias); the relevant parameters appear inline. |
 | **▶ RUN ANALYSIS** | Analyze the current input once, off the UI thread. |
 | **▦ BATCH FOLDER…** | Pick a folder and analyze every `.json`/`.csv` in it, one report each. |
 | **◉ CONTINUOUS WATCH** | Watch the loaded file and re-run automatically whenever it changes (continuous generation). Click again to stop. |

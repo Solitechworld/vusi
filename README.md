@@ -1,10 +1,11 @@
 # vusi
 
-> **Fork.** Based on [oritwoen/vusi](https://github.com/oritwoen/vusi) (MIT). This copy adds a native, Metal-accelerated desktop GUI (`gui/`), a macOS `.app` bundle, the `vusi-engine` shared analysis crate, and Bitcoin raw-transaction → `(r, s, z, pubkey)` extraction. Upstream copyright is retained in [LICENSE](LICENSE).
+> **Fork.** Based on [oritwoen/vusi](https://github.com/oritwoen/vusi) (MIT) — the CLI, library and attack engines. This fork adds a native Metal GUI (`gui/`), the shared `vusi-engine` crate, Bitcoin raw-transaction → `(r, s, z, pubkey)` extraction, the **ATXQU** address-transaction pipeline (`atxqu/`), and macOS `.app` packaging. Upstream copyright is retained in [LICENSE](LICENSE).
 
 ![vusi — ECDSA Signature Vulnerability Analyzer](assets/screenshot.png)
 
-*The native Metal GUI: load a signature set or extract `(r, s, z, pubkey)` from a raw Bitcoin transaction, pick an attack vector, and run — nonce reuse, biased nonce, polynonce. Rendered through Metal on Apple Silicon / T2.*
+*The native Metal GUI: load a signature set or extract `(r, s, z, pubkey)` from a raw Bitcoin transaction, pick an attack vector, and run. Rendered through Metal on Apple Silicon / T2.*
+
 
 [![Crates.io](https://img.shields.io/crates/v/vusi?style=flat&colorA=130f40&colorB=474787)](https://crates.io/crates/vusi)
 [![Downloads](https://img.shields.io/crates/d/vusi?style=flat&colorA=130f40&colorB=474787)](https://crates.io/crates/vusi)
@@ -19,46 +20,92 @@ ECDSA signature vulnerability analysis library and CLI tool.
 > and autosave. Launch it with `cargo run -p vusi-gui --release` or by
 > double-clicking `run-gui.command`. See [gui/README.md](gui/README.md).
 
-## What it does
+## Features
 
-`vusi` is a multi-tool for ECDSA signature-vulnerability analysis: it audits a
-set of signatures you already hold and, for any that are broken by a nonce
-weakness, recovers the private key. Three independent attack classes:
+- **Nonce Reuse Detection**: Identifies signatures using the same nonce (k value)
+- **Private Key Recovery**: Recovers private keys from vulnerable signatures
+- **Multiple Input Formats**: Supports JSON and CSV input
+- **Flexible Output**: Human-readable or JSON output formats
+- **A full family of nonce attacks** (see below): shared-nonce, reuse-r,
+  delta-bias, bitflip (fault), gcd (affine relation), polynonce, biased-nonce
+  (low-bit / lll / broken-nonce) and an auto-sweeping nonce-bias mode.
 
-- **Nonce reuse** — signatures sharing a nonce (identical `r`). Two are enough
-  to recover the key algebraically.
-- **Polynonce** — polynomial relationships between successive nonces
-  (configurable degree: linear, quadratic, …), recovered from a chain of
-  signatures.
-- **Biased nonce (HNP)** — nonces with systematic bias (known LSBs, known MSBs,
-  or a restricted range) solved as a Hidden Number Problem via lattice
-  reduction (LLL, or windowed-LLL with tunable block size and rounds). Needs
-  4+ signatures.
+## Attacks
 
-Around those:
+Selected with `--attack <name>`:
 
-- **Bitcoin transaction extraction** — pull `(r, s, z, pubkey)` straight from a
-  raw Bitcoin transaction: it parses the DER signature out of each input's
-  scriptSig, derives the sighash `z`, and hands the tuples to the analyzer.
-- **Three ways to drive it** — a CLI (`vusi analyze`), a native Metal GUI
-  (`gui/`), and a library (`vusi-engine`) that both front-ends share, so every
-  interface gives identical results.
-- **JSON or CSV in**, human-readable or JSON out; batch a folder or watch one
-  continuously (GUI).
+| `--attack`      | Idea | Needs |
+|-----------------|------|-------|
+| `nonce-reuse`   | identical `r` reused (default) | 2 sigs / group |
+| `shared-nonce`  | same nonce, grouped by `(r, pubkey)` | 2 sigs |
+| `reuse-r`       | reuse of `r`, grouped by `r` alone (flags cross-key reuse) | 2 sigs |
+| `delta-bias`    | nonces differ by a known `Δ`: `k2 = k1 + Δ` (`--delta`) | 2 sigs |
+| `bitflip`       | single-bit nonce fault, `Δ = ±2^i` swept (`--bitflip-bits`) | 2 sigs + pubkey |
+| `gcd`           | unknown small affine relation `k2 = a·k1 + b`, swept (`--gcd-a-max`, `--gcd-b-max`) | 2 sigs + pubkey |
+| `polynonce`     | polynomial nonce recurrence | 4+ sigs + pubkey |
+| `biased-nonce`  | HNP lattice, fixed `--bias-type {lsb,msb,range}` + `--known-bits` | 4+ sigs |
+| `low-bit`       | HNP with known nonce **LSBs** (alias of `biased-nonce --bias-type lsb`) | 4+ sigs |
+| `lll`           | HNP with known nonce **MSBs** via LLL (alias of `biased-nonce --bias-type msb`) | 4+ sigs |
+| `broken-nonce`  | weak-RNG / range-bounded nonce (alias of `biased-nonce --bias-type range`) | 4+ sigs |
+| `nonce-bias`    | generic MSB bias, **auto-sweeps** the known-bit width (`--bias-min-bits`, `--bias-max-bits`) | 4+ sigs |
 
-## Added in this fork
+The `delta-bias`, `bitflip` and `gcd` modes share one closed-form
+[two-affinely-related-nonce solver](https://eprint.iacr.org/2025/705)
+(`d = (a·s2·z1 − s1·z2 + b·s1·s2) / (s1·r2 − a·s2·r1)`); the sweep modes verify
+each candidate against the public key.
 
-Upstream [oritwoen/vusi](https://github.com/oritwoen/vusi) is the CLI, library,
-and the three attack engines. This fork builds a product around that core:
+```bash
+vusi analyze sigs.json --attack delta-bias --delta 1337
+vusi analyze sigs.json --attack bitflip --bitflip-bits 64
+vusi analyze sigs.json --attack gcd --gcd-a-max 8 --gcd-b-max 256
+vusi analyze sigs.json --attack nonce-bias --bias-max-bits 24
+```
 
-- **Native Metal GUI** (`gui/`) — a GPU-rendered desktop front-end (wgpu →
-  Metal on Apple Silicon / T2), with batch-folder processing, continuous file
-  watching, and autosave. Analysis runs off the UI thread.
-- **`vusi-engine`** — a UI-agnostic analysis crate the GUI drives, so the
-  interface layer only handles pixels and the results match the CLI exactly.
-- **Bitcoin transaction extraction** — pull `(r, s, z, pubkey)` from a raw
-  Bitcoin transaction (DER parse + sighash derivation) and feed it straight in.
-- **macOS `.app` packaging** — `bundle-macos.sh` and a double-clickable bundle.
+The lattice modes (`biased-nonce`, `low-bit`, `lll`, `broken-nonce`,
+`nonce-bias`) require the `biased-nonce` build feature (GMP/MPFR); `polynonce`
+requires the `polynonce` feature. Build them with
+`cargo build --features polynonce,biased-nonce`.
+
+## From an address to recovered keys: the ATXQU pipeline
+
+vusi analyzes signatures you already have. Getting those signatures **off-chain
+for a given address** is what the bundled [`atxqu/`](atxqu/README.md) tool does:
+**ATXQU** (Address Transaction Query Utility) fetches every transaction where an
+address appears in the inputs (i.e. it *spent* funds) and normalizes each to a
+standard transaction JSON. vusi then extracts the `(r, s, z, pubkey)` tuples
+from those raw transactions and runs any attack over them:
+
+```
+address ──ATXQU──▶ spent transactions (JSON) ──vusi extract──▶ (r,s,z,pubkey) ──vusi attack──▶ keys
+```
+
+Two ways to drive it:
+
+```bash
+# One command (fetch → extract → analyze):
+atxqu/scan_and_analyze.sh 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 reuse-r
+
+# Or step by step:
+python3 atxqu/atxqu_cli.py <address> -o txs.json     # fetch + normalize
+vusi analyze --from-tx txs.json --attack reuse-r     # extract + analyze
+```
+
+vusi understands raw transaction JSON directly:
+
+```bash
+vusi extract txs.json                 # raw transactions → [{r,s,z,pubkey}] on stdout
+vusi analyze --from-tx txs.json       # extract, then analyze in one step
+```
+
+Extraction reconstructs the legacy-P2PKH `SIGHASH_ALL` sighash and **verifies
+each signature** against it, so only genuine `(r, s, z)` tuples reach the
+analyzer (SegWit / non-`ALL` inputs are skipped with a reason). See
+[`atxqu/README.md`](atxqu/README.md) for ATXQU's own options (batch address
+lists, providers, the neon dashboard, resume/pause).
+
+**In the desktop GUI**, the same pipeline is one window: switch the input source
+to **ADDRESS**, type an address, pick a provider/endpoint, and hit RUN — the GUI
+runs ATXQU, extracts, and attacks in one go. See [`gui/README.md`](gui/README.md).
 
 ## Installation
 

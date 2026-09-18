@@ -11,9 +11,15 @@ use vusi::attack::biased_nonce::{BiasType, ReductionAlgorithm};
 use vusi::attack::BiasedNonceAttack;
 #[cfg(feature = "polynonce")]
 use vusi::attack::PolynonceAttack;
-use vusi::attack::{Attack, NonceReuseAttack, Vulnerability};
+use vusi::attack::{
+    Attack, BitflipAttack, DeltaBiasAttack, GcdAttack, NonceReuseAttack, ReuseRAttack,
+    SharedNonceAttack, Vulnerability,
+};
+#[cfg(feature = "biased-nonce")]
+use vusi::attack::NonceBiasAttack;
 use vusi::math::scalar_to_decimal_string;
-use vusi::provider::load_signatures;
+use vusi::extract::extract_from_tx_json;
+use vusi::provider::{load_signatures, parse_signatures};
 use vusi::signature::Signature;
 
 #[derive(Parser)]
@@ -36,7 +42,7 @@ enum Command {
         #[arg(
             long,
             default_value = "nonce-reuse",
-            help = "Attack type: nonce-reuse, polynonce, biased-nonce"
+            help = "Attack: nonce-reuse, shared-nonce, reuse-r, delta-bias, bitflip, gcd, polynonce, biased-nonce, low-bit, lll, broken-nonce, nonce-bias"
         )]
         attack: String,
 
@@ -80,6 +86,63 @@ enum Command {
 
         #[arg(long, help = "Max signatures to sample for biased-nonce recovery")]
         max_samples: Option<usize>,
+
+        #[arg(
+            long,
+            help = "Known delta Δ for delta-bias (decimal, may be negative): k2 = k1 + Δ"
+        )]
+        delta: Option<String>,
+
+        #[arg(
+            long,
+            default_value = "256",
+            help = "Max bit index to sweep for the bitflip fault attack"
+        )]
+        bitflip_bits: usize,
+
+        #[arg(
+            long,
+            default_value = "8",
+            help = "Max |a| multiplier swept by the gcd (affine-relation) attack"
+        )]
+        gcd_a_max: u64,
+
+        #[arg(
+            long,
+            default_value = "256",
+            help = "Max |b| offset swept by the gcd (affine-relation) attack"
+        )]
+        gcd_b_max: u64,
+
+        #[arg(
+            long,
+            default_value = "1",
+            help = "Min MSB bias width for the nonce-bias sweep"
+        )]
+        bias_min_bits: usize,
+
+        #[arg(
+            long,
+            default_value = "16",
+            help = "Max MSB bias width for the nonce-bias sweep"
+        )]
+        bias_max_bits: usize,
+
+        #[arg(
+            long,
+            help = "Treat INPUT as raw Bitcoin transaction JSON (e.g. ATXQU output): extract (r,s,z,pubkey) first, then analyze"
+        )]
+        from_tx: bool,
+    },
+
+    /// Extract (r, s, z, pubkey) tuples from raw Bitcoin transaction JSON
+    /// (e.g. an ATXQU combined_transactions file) into vusi's analyze format.
+    Extract {
+        #[arg(default_value = "-")]
+        input: String,
+
+        #[arg(long, help = "Include signatures that failed sighash verification")]
+        all: bool,
     },
 }
 
@@ -112,13 +175,61 @@ fn run(cli: Cli) -> Result<bool> {
             window_block_size,
             window_rounds,
             max_samples,
+            delta,
+            bitflip_bits,
+            gcd_a_max,
+            gcd_b_max,
+            bias_min_bits,
+            bias_max_bits,
+            from_tx,
         } => {
-            let signatures = load_signatures(&input)?;
+            let signatures = if from_tx {
+                let content = read_input(&input)?;
+                let extraction = extract_from_tx_json(&content)?;
+                eprintln!(
+                    "Extracted {} signature(s) ({} verified) from {} input(s); {} skipped.",
+                    extraction.signatures.len(),
+                    extraction.verified,
+                    extraction.total_inputs,
+                    extraction.skipped.len()
+                );
+                parse_signatures(&extraction.to_vusi_json(true))?
+            } else {
+                load_signatures(&input)?
+            };
 
             let (vulns, attack_impl): (Vec<Vulnerability>, Box<dyn Attack>) = match attack.as_str()
             {
                 "nonce-reuse" => {
                     let attack = NonceReuseAttack;
+                    let vulns = attack.detect(&signatures);
+                    (vulns, Box::new(attack))
+                }
+                "shared-nonce" => {
+                    let attack = SharedNonceAttack;
+                    let vulns = attack.detect(&signatures);
+                    (vulns, Box::new(attack))
+                }
+                "reuse-r" => {
+                    let attack = ReuseRAttack;
+                    let vulns = attack.detect(&signatures);
+                    (vulns, Box::new(attack))
+                }
+                "delta-bias" | "delta" => {
+                    let delta_str = delta.as_deref().unwrap_or("1");
+                    let delta_scalar =
+                        vusi::attack::related_nonce::parse_signed_delta(delta_str)?;
+                    let attack = DeltaBiasAttack::new(delta_scalar);
+                    let vulns = attack.detect(&signatures);
+                    (vulns, Box::new(attack))
+                }
+                "bitflip" => {
+                    let attack = BitflipAttack::new(bitflip_bits);
+                    let vulns = attack.detect(&signatures);
+                    (vulns, Box::new(attack))
+                }
+                "gcd" => {
+                    let attack = GcdAttack::new(gcd_a_max, gcd_b_max);
                     let vulns = attack.detect(&signatures);
                     (vulns, Box::new(attack))
                 }
@@ -155,6 +266,50 @@ fn run(cli: Cli) -> Result<bool> {
                     let vulns = attack.detect(&signatures);
                     (vulns, Box::new(attack))
                 }
+                #[cfg(feature = "biased-nonce")]
+                "low-bit" | "lsb" | "lll" | "msb" | "broken-nonce" | "broken" => {
+                    let bias = match attack.as_str() {
+                        "low-bit" | "lsb" => BiasType::Lsb,
+                        "lll" | "msb" => BiasType::Msb,
+                        _ => BiasType::Range, // broken-nonce
+                    };
+                    let reduction = match reduction.as_str() {
+                        "lll" => ReductionAlgorithm::Lll,
+                        "windowed-lll" => ReductionAlgorithm::WindowedLll {
+                            block_size: window_block_size,
+                            rounds: window_rounds,
+                        },
+                        _ => anyhow::bail!("Unknown reduction: {}", reduction),
+                    };
+                    if bias != BiasType::Range && known_bits < 4 {
+                        anyhow::bail!("Known bits must be >= 4 for this attack");
+                    }
+                    if bias == BiasType::Range && (known_bits == 0 || known_bits > 256) {
+                        anyhow::bail!("Range max bits must be between 1 and 256");
+                    }
+                    let attack = BiasedNonceAttack::new(bias, known_bits, reduction, max_samples);
+                    let vulns = attack.detect(&signatures);
+                    (vulns, Box::new(attack))
+                }
+                #[cfg(feature = "biased-nonce")]
+                "nonce-bias" | "bias-sr" => {
+                    let reduction = match reduction.as_str() {
+                        "lll" => ReductionAlgorithm::Lll,
+                        "windowed-lll" => ReductionAlgorithm::WindowedLll {
+                            block_size: window_block_size,
+                            rounds: window_rounds,
+                        },
+                        _ => anyhow::bail!("Unknown reduction: {}", reduction),
+                    };
+                    let attack = NonceBiasAttack::new(
+                        bias_min_bits,
+                        bias_max_bits,
+                        reduction,
+                        max_samples,
+                    );
+                    let vulns = attack.detect(&signatures);
+                    (vulns, Box::new(attack))
+                }
                 _ => anyhow::bail!("Unknown attack type: {}", attack),
             };
 
@@ -163,6 +318,32 @@ fn run(cli: Cli) -> Result<bool> {
 
             Ok(!vulns.is_empty())
         }
+
+        Command::Extract { input, all } => {
+            let content = read_input(&input)?;
+            let extraction = extract_from_tx_json(&content)?;
+            eprintln!(
+                "Extracted {} signature(s) ({} verified) from {} input(s); {} skipped.",
+                extraction.signatures.len(),
+                extraction.verified,
+                extraction.total_inputs,
+                extraction.skipped.len()
+            );
+            println!("{}", extraction.to_vusi_json(!all));
+            Ok(false)
+        }
+    }
+}
+
+/// Read a CLI input argument: `-` means stdin, otherwise a file path.
+fn read_input(input: &str) -> Result<String> {
+    use std::io::Read;
+    if input == "-" {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        Ok(buf)
+    } else {
+        Ok(std::fs::read_to_string(input)?)
     }
 }
 

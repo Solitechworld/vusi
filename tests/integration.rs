@@ -146,3 +146,45 @@ fn test_polynonce_json_output_schema() {
         "hex should end with 3039 (12345 in hex)"
     );
 }
+
+// --- ATXQU pipeline: raw-tx extraction into the analyzer -------------------
+
+#[test]
+fn test_extract_from_normalized_txs() {
+    // `vusi extract` on ATXQU-shaped (normalized) transaction JSON should emit
+    // a JSON array of {r,s,z,pubkey} rows for the legacy P2PKH inputs.
+    let out = Command::cargo_bin("vusi")
+        .unwrap()
+        .arg("extract")
+        .arg("tests/fixtures/tx_normalized.json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let rows = json.as_array().expect("array of signatures");
+    assert!(!rows.is_empty(), "should extract at least one signature");
+    for row in rows {
+        assert!(row["r"].is_string());
+        assert!(row["s"].is_string());
+        assert!(row["z"].is_string());
+        assert!(row["pubkey"].is_string());
+    }
+}
+
+#[test]
+fn test_analyze_from_tx_flag() {
+    // `analyze --from-tx` should extract then analyze in one shot. This normal
+    // data has unique nonces, so it is clean (exit 0, no vulnerabilities).
+    Command::cargo_bin("vusi")
+        .unwrap()
+        .arg("analyze")
+        .arg("--from-tx")
+        .arg("tests/fixtures/tx_normalized.json")
+        .arg("--attack")
+        .arg("reuse-r")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("No vulnerabilities found"));
+}

@@ -28,6 +28,15 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Vusi"
 chmod +x "$APP/Contents/MacOS/Vusi"
 
+# Bundle ATXQU so the GUI's ADDRESS-scan mode works from the installed app
+# (it shells out to python3 atxqu/atxqu_cli.py; macOS ships python3).
+if [ -d "atxqu" ]; then
+  echo "   bundling ATXQU (address-scan support)…"
+  rm -rf "$APP/Contents/Resources/atxqu"
+  mkdir -p "$APP/Contents/Resources/atxqu"
+  cp atxqu/*.py "$APP/Contents/Resources/atxqu/" 2>/dev/null || true
+fi
+
 echo ">> [3/5] Building app icon…"
 ICON_SRC="assets/icon-1024.png"
 ICON_OK=0

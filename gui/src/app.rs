@@ -20,6 +20,7 @@ const HISTORY_CAP: usize = 40;
 enum InputMode {
     File,
     Paste,
+    Address,
 }
 
 pub struct VusiApp {
@@ -30,6 +31,12 @@ pub struct VusiApp {
     input_mode: InputMode,
     file_path: Option<PathBuf>,
     paste_text: String,
+    // Address fetch (ATXQU pipeline)
+    address: String,
+    provider: String,
+    endpoint: String,
+    fetch_parallel: bool,
+    fetch_workers: usize,
 
     // Attack configuration
     attack: AttackKind,
@@ -41,6 +48,13 @@ pub struct VusiApp {
     window_rounds: usize,
     max_samples_enabled: bool,
     max_samples: usize,
+    // Related-nonce attack params
+    delta: String,
+    bitflip_bits: usize,
+    gcd_a_max: u64,
+    gcd_b_max: u64,
+    bias_min_bits: usize,
+    bias_max_bits: usize,
 
     // Extraction (BTC tx → r,s,z)
     extract_only_verified: bool,
@@ -82,6 +96,11 @@ impl VusiApp {
             input_mode: InputMode::File,
             file_path: None,
             paste_text: String::new(),
+            address: String::new(),
+            provider: "blockbook".to_string(),
+            endpoint: "https://bitcoin.atomicwallet.io/api/v2".to_string(),
+            fetch_parallel: false,
+            fetch_workers: 16,
             attack: AttackKind::NonceReuse,
             degree: 1,
             bias_type: "lsb".to_string(),
@@ -91,6 +110,12 @@ impl VusiApp {
             window_rounds: 2,
             max_samples_enabled: false,
             max_samples: 256,
+            delta: "1".to_string(),
+            bitflip_bits: 256,
+            gcd_a_max: 8,
+            gcd_b_max: 256,
+            bias_min_bits: 1,
+            bias_max_bits: 16,
             extract_only_verified: true,
             extracted_json: None,
             autosave_enabled: false,
@@ -137,6 +162,12 @@ impl VusiApp {
             } else {
                 None
             },
+            delta: self.delta.clone(),
+            bitflip_bits: self.bitflip_bits.max(1),
+            gcd_a_max: self.gcd_a_max.max(1),
+            gcd_b_max: self.gcd_b_max,
+            bias_min_bits: self.bias_min_bits.max(1),
+            bias_max_bits: self.bias_max_bits.max(self.bias_min_bits.max(1)),
         }
     }
 
@@ -198,6 +229,38 @@ impl VusiApp {
                 self.worker.send(Command::AnalyzeText {
                     content: self.paste_text.clone(),
                     source: "<pasted>".to_string(),
+                    cfg,
+                    autosave_dir,
+                });
+            }
+            InputMode::Address => {
+                let addresses: Vec<String> = self
+                    .address
+                    .split([',', ' ', '\n', '\t', ';'])
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                if addresses.is_empty() {
+                    self.push_log(LogLevel::Warn, "Enter a Bitcoin address to scan.".into());
+                    return;
+                }
+                self.push_log(
+                    LogLevel::Info,
+                    format!(
+                        "ATXQU → {}: scanning {} address(es), then extracting + running {}",
+                        self.provider,
+                        addresses.len(),
+                        cfg.attack.label()
+                    ),
+                );
+                self.worker.send(Command::FetchAddress {
+                    addresses,
+                    provider: self.provider.clone(),
+                    endpoint: self.endpoint.clone(),
+                    parallel: self.fetch_parallel,
+                    workers: self.fetch_workers.max(1),
+                    only_verified: self.extract_only_verified,
                     cfg,
                     autosave_dir,
                 });
@@ -314,12 +377,36 @@ impl VusiApp {
                 self.watching = w;
             }
             WorkerEvent::Extracted { json, source } => {
-                // Load the extracted tuples into the input box so the user can
-                // see, re-run, or export them.
-                self.paste_text = json.clone();
-                self.input_mode = InputMode::Paste;
+                // Keep the full extracted set in memory (for SAVE JSON and for
+                // the analysis that already ran on it). Only mirror it into the
+                // on-screen text box when it is small: egui re-lays-out the whole
+                // string every frame, so dumping a multi-MB blob there can hang
+                // or crash the window. Large sets get a short placeholder instead.
+                const MAX_PREVIEW_BYTES: usize = 262_144; // 256 KB
+                let bytes = json.len();
+                if bytes <= MAX_PREVIEW_BYTES {
+                    self.paste_text = json.clone();
+                    self.input_mode = InputMode::Paste;
+                    self.push_log(
+                        LogLevel::Good,
+                        format!("Loaded extracted signatures from {source} into input."),
+                    );
+                } else {
+                    self.paste_text = format!(
+                        "// {:.1} MB of extracted signatures from {source}.\n\
+                         // Too large to preview here — the analysis already ran on the\n\
+                         // full set (see results below). Use  ⤓ SAVE JSON  to export them.",
+                        bytes as f64 / 1_048_576.0
+                    );
+                    self.push_log(
+                        LogLevel::Info,
+                        format!(
+                            "Extracted set from {source} is large ({:.1} MB) — kept in memory, not shown. Use SAVE JSON to export.",
+                            bytes as f64 / 1_048_576.0
+                        ),
+                    );
+                }
                 self.extracted_json = Some(json);
-                self.push_log(LogLevel::Good, format!("Loaded extracted signatures from {source} into input."));
             }
             WorkerEvent::Report(report, _saved) => {
                 self.history.push_front(report.clone());
@@ -368,6 +455,7 @@ impl VusiApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.input_mode, InputMode::File, "FILE");
             ui.selectable_value(&mut self.input_mode, InputMode::Paste, "PASTE");
+            ui.selectable_value(&mut self.input_mode, InputMode::Address, "ADDRESS");
         });
 
         match self.input_mode {
@@ -406,6 +494,48 @@ impl VusiApp {
                                 .hint_text("[{\"r\":\"…\",\"s\":\"…\",\"z\":\"…\"}]"),
                         );
                     });
+            }
+            InputMode::Address => {
+                ui.label(
+                    RichText::new("Scan an address with ATXQU → extract → attack, in one run.")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.address)
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("bitcoin address(es) — comma / space / newline separated"),
+                );
+                labeled(ui, "provider", |ui| {
+                    egui::ComboBox::from_id_source("atxqu_provider")
+                        .selected_text(&self.provider)
+                        .show_ui(ui, |ui| {
+                            for p in ["blockbook", "haskoin"] {
+                                ui.selectable_value(&mut self.provider, p.to_string(), p);
+                            }
+                        });
+                });
+                labeled(ui, "endpoint", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.endpoint)
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.fetch_parallel, "parallel")
+                        .on_hover_text("List txids then fetch concurrently (for endpoints without bulk pages).");
+                    if self.fetch_parallel {
+                        labeled(ui, "workers", |ui| {
+                            ui.add(egui::DragValue::new(&mut self.fetch_workers).range(1..=128));
+                        });
+                    }
+                });
+                ui.label(
+                    RichText::new("Requires Python 3 and network access to the endpoint.")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
             }
         }
 
@@ -495,6 +625,79 @@ impl VusiApp {
                         .small()
                         .color(theme::TEXT_DIM),
                 );
+            }
+            AttackKind::SharedNonce => {
+                ui.label(
+                    RichText::new("Same nonce reused (identical r) under one key.")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
+            }
+            AttackKind::ReuseR => {
+                ui.label(
+                    RichText::new("Groups by r alone; flags cross-key r reuse, recovers same-key.")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
+            }
+            AttackKind::DeltaBias => {
+                ui.label(
+                    RichText::new("Nonces differ by a known Δ: k2 = k1 + Δ.")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
+                labeled(ui, "delta Δ", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.delta)
+                            .desired_width(220.0)
+                            .hint_text("decimal, may be negative"),
+                    );
+                });
+            }
+            AttackKind::Bitflip => {
+                ui.label(
+                    RichText::new("Single-bit nonce fault: sweeps Δ = ±2^i.")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
+                labeled(ui, "max bit", |ui| {
+                    ui.add(egui::DragValue::new(&mut self.bitflip_bits).range(1..=256));
+                });
+            }
+            AttackKind::Gcd => {
+                ui.label(
+                    RichText::new("Unknown small affine relation k2 = a·k1 + b (swept).")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
+                labeled(ui, "max |a|", |ui| {
+                    ui.add(egui::DragValue::new(&mut self.gcd_a_max).range(1..=1024));
+                });
+                labeled(ui, "max |b|", |ui| {
+                    ui.add(egui::DragValue::new(&mut self.gcd_b_max).range(0..=1_000_000));
+                });
+            }
+            AttackKind::NonceBias => {
+                ui.label(
+                    RichText::new("Generic MSB nonce bias; auto-sweeps the known-bit width.")
+                        .small()
+                        .color(theme::TEXT_DIM),
+                );
+                labeled(ui, "min bits", |ui| {
+                    ui.add(egui::DragValue::new(&mut self.bias_min_bits).range(1..=255));
+                });
+                labeled(ui, "max bits", |ui| {
+                    ui.add(egui::DragValue::new(&mut self.bias_max_bits).range(1..=255));
+                });
+                labeled(ui, "reduction", |ui| {
+                    egui::ComboBox::from_id_source("reduction_nb")
+                        .selected_text(&self.reduction)
+                        .show_ui(ui, |ui| {
+                            for r in ["lll", "windowed-lll"] {
+                                ui.selectable_value(&mut self.reduction, r.to_string(), r);
+                            }
+                        });
+                });
             }
         }
 

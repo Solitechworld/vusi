@@ -18,12 +18,17 @@ vusi/
 │   ├── signature.rs     # SignatureInput (IO) → Signature (domain), grouping
 │   ├── math.rs          # Decimal ↔ Scalar, key recovery formulas
 │   ├── provider.rs      # JSON/CSV parsing, auto-detection
+│   ├── extract.rs       # raw Bitcoin tx JSON → (r,s,z,pubkey); CLI `extract`/`--from-tx`
 │   └── attack/
-│       ├── mod.rs       # trait Attack
-│       └── nonce_reuse.rs
+│       ├── mod.rs       # trait Attack + shared key-verification helpers
+│       ├── nonce_reuse.rs
+│       ├── related_nonce.rs # shared-nonce, reuse-r, delta-bias, bitflip, gcd
+│       ├── polynonce.rs     # feature = "polynonce"
+│       └── biased_nonce.rs  # biased-nonce + nonce-bias; feature = "biased-nonce"
 ├── tests/
-│   ├── integration.rs   # E2E with assert_cmd
-│   └── fixtures/        # Test vectors (real Bitcoin TX)
+│   ├── integration.rs   # E2E with assert_cmd (incl. extract / --from-tx)
+│   └── fixtures/        # Test vectors (real Bitcoin TX; tx_normalized.json for extract)
+├── atxqu/               # ATXQU fetch front-end (Python) + scan_and_analyze.sh pipeline
 └── .github/workflows/   # CI, crates.io, AUR publish
 ```
 
@@ -42,7 +47,12 @@ vusi/
 | Symbol | Type | Location | Role |
 |--------|------|----------|------|
 | `Attack` | trait | attack/mod.rs:9 | Extensibility point for attack types |
-| `NonceReuseAttack` | struct | attack/nonce_reuse.rs | Only impl in MVP |
+| `NonceReuseAttack` | struct | attack/nonce_reuse.rs | Same-`r` reuse |
+| `SharedNonceAttack` / `ReuseRAttack` | struct | attack/related_nonce.rs | Reuse variants |
+| `DeltaBiasAttack` / `BitflipAttack` / `GcdAttack` | struct | attack/related_nonce.rs | Affine-relation family |
+| `solve_affine_pair` | fn | attack/related_nonce.rs | Closed form `d` for `k2=a·k1+b` |
+| `verify_candidate_key` | fn | attack/mod.rs | Pubkey match / r-check for swept candidates |
+| `NonceBiasAttack` | struct | attack/biased_nonce.rs | MSB-bias with auto known-bit sweep |
 | `Signature` | struct | signature.rs:27 | Domain model (k256::Scalar) |
 | `SignatureInput` | struct | signature.rs:18 | IO model (serde, decimal strings) |
 | `parse_scalar_decimal_strict` | fn | math.rs:14 | Decimal → Scalar, strict validation |

@@ -459,7 +459,7 @@ mod tests {
         let ex = extract_from_tx_json(SAMPLE_TX).unwrap();
         let json = ex.to_vusi_json(true);
         // Must parse back through the vusi provider without error.
-        let sigs = vusi::provider::parse_signatures(&json).unwrap();
+        let sigs = crate::provider::parse_signatures(&json).unwrap();
         assert_eq!(sigs.len(), 11);
     }
 

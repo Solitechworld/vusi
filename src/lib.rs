@@ -4,6 +4,7 @@
 //! in ECDSA signatures, focusing on nonce reuse attacks.
 
 pub mod attack;
+pub mod extract;
 pub mod math;
 pub mod provider;
 pub mod signature;

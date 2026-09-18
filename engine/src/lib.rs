@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub mod extract;
-pub use extract::{extract_from_tx_json, ExtractedSig, Extraction};
+// Extraction now lives in the core `vusi` library; re-export for compatibility.
+pub use vusi::extract::{extract_from_tx_json, ExtractedSig, Extraction};
 
 use vusi::attack::{Attack, NonceReuseAttack, Vulnerability};
 use vusi::math::scalar_to_decimal_string;
@@ -29,13 +29,31 @@ pub enum AttackKind {
     Polynonce,
     /// Nonces with known biased bits, recovered via lattice reduction.
     BiasedNonce,
+    /// Same nonce reused (identical `r`), grouped by (r, pubkey).
+    SharedNonce,
+    /// Reuse of the `r` value, grouped by `r` alone (detects cross-key reuse).
+    ReuseR,
+    /// Two nonces differ by a known constant Δ (`k2 = k1 + Δ`).
+    DeltaBias,
+    /// Single-bit nonce fault: nonces differ by ±2^i (swept).
+    Bitflip,
+    /// Unknown small affine relation `k2 = a*k1 + b` (swept, verified).
+    Gcd,
+    /// Generic MSB nonce bias with an automatic known-bit sweep.
+    NonceBias,
 }
 
 impl AttackKind {
     pub const ALL: &'static [AttackKind] = &[
         AttackKind::NonceReuse,
+        AttackKind::SharedNonce,
+        AttackKind::ReuseR,
+        AttackKind::DeltaBias,
+        AttackKind::Bitflip,
+        AttackKind::Gcd,
         AttackKind::Polynonce,
         AttackKind::BiasedNonce,
+        AttackKind::NonceBias,
     ];
 
     pub fn label(self) -> &'static str {
@@ -43,6 +61,12 @@ impl AttackKind {
             AttackKind::NonceReuse => "Nonce Reuse",
             AttackKind::Polynonce => "Polynonce",
             AttackKind::BiasedNonce => "Biased Nonce (lattice)",
+            AttackKind::SharedNonce => "Shared Nonce",
+            AttackKind::ReuseR => "Reuse-R",
+            AttackKind::DeltaBias => "Delta Bias",
+            AttackKind::Bitflip => "Bitflip (fault)",
+            AttackKind::Gcd => "GCD (affine relation)",
+            AttackKind::NonceBias => "Nonce Bias (auto-sweep)",
         }
     }
 
@@ -51,14 +75,27 @@ impl AttackKind {
             AttackKind::NonceReuse => "nonce-reuse",
             AttackKind::Polynonce => "polynonce",
             AttackKind::BiasedNonce => "biased-nonce",
+            AttackKind::SharedNonce => "shared-nonce",
+            AttackKind::ReuseR => "reuse-r",
+            AttackKind::DeltaBias => "delta-bias",
+            AttackKind::Bitflip => "bitflip",
+            AttackKind::Gcd => "gcd",
+            AttackKind::NonceBias => "nonce-bias",
         }
     }
 
     /// Whether this attack is available in the current build.
     pub fn is_available(self) -> bool {
         match self {
-            AttackKind::NonceReuse | AttackKind::Polynonce => true,
-            AttackKind::BiasedNonce => cfg!(feature = "biased-nonce"),
+            AttackKind::NonceReuse
+            | AttackKind::Polynonce
+            | AttackKind::SharedNonce
+            | AttackKind::ReuseR
+            | AttackKind::DeltaBias
+            | AttackKind::Bitflip
+            | AttackKind::Gcd => true,
+            // Lattice-based modes need the biased-nonce feature (GMP/MPFR).
+            AttackKind::BiasedNonce | AttackKind::NonceBias => cfg!(feature = "biased-nonce"),
         }
     }
 }
@@ -79,6 +116,17 @@ pub struct AnalysisConfig {
     pub window_rounds: usize,
     /// Max signatures sampled for biased-nonce recovery.
     pub max_samples: Option<usize>,
+    /// Known delta Δ (decimal, may be negative) for the delta-bias attack.
+    pub delta: String,
+    /// Max bit index swept by the bitflip attack.
+    pub bitflip_bits: usize,
+    /// Max |a| multiplier swept by the gcd attack.
+    pub gcd_a_max: u64,
+    /// Max |b| offset swept by the gcd attack.
+    pub gcd_b_max: u64,
+    /// Min / max MSB bias width for the nonce-bias sweep.
+    pub bias_min_bits: usize,
+    pub bias_max_bits: usize,
 }
 
 impl Default for AnalysisConfig {
@@ -92,6 +140,12 @@ impl Default for AnalysisConfig {
             window_block_size: 20,
             window_rounds: 2,
             max_samples: None,
+            delta: "1".to_string(),
+            bitflip_bits: 256,
+            gcd_a_max: 8,
+            gcd_b_max: 256,
+            bias_min_bits: 1,
+            bias_max_bits: 16,
         }
     }
 }
@@ -155,7 +209,46 @@ fn build_attack(cfg: &AnalysisConfig) -> Result<Box<dyn Attack>> {
         // (see engine/Cargo.toml), so this type is always present.
         AttackKind::Polynonce => Ok(Box::new(vusi::attack::PolynonceAttack::new(cfg.degree))),
         AttackKind::BiasedNonce => build_biased(cfg),
+        AttackKind::SharedNonce => Ok(Box::new(vusi::attack::SharedNonceAttack)),
+        AttackKind::ReuseR => Ok(Box::new(vusi::attack::ReuseRAttack)),
+        AttackKind::DeltaBias => {
+            let delta = vusi::attack::related_nonce::parse_signed_delta(&cfg.delta)?;
+            Ok(Box::new(vusi::attack::DeltaBiasAttack::new(delta)))
+        }
+        AttackKind::Bitflip => Ok(Box::new(vusi::attack::BitflipAttack::new(cfg.bitflip_bits))),
+        AttackKind::Gcd => Ok(Box::new(vusi::attack::GcdAttack::new(
+            cfg.gcd_a_max,
+            cfg.gcd_b_max,
+        ))),
+        AttackKind::NonceBias => build_nonce_bias(cfg),
     }
+}
+
+#[cfg(feature = "biased-nonce")]
+fn build_nonce_bias(cfg: &AnalysisConfig) -> Result<Box<dyn Attack>> {
+    use vusi::attack::biased_nonce::ReductionAlgorithm;
+    use vusi::attack::NonceBiasAttack;
+    let reduction = match cfg.reduction.as_str() {
+        "lll" => ReductionAlgorithm::Lll,
+        "windowed-lll" => ReductionAlgorithm::WindowedLll {
+            block_size: cfg.window_block_size,
+            rounds: cfg.window_rounds,
+        },
+        other => return Err(anyhow!("Unknown reduction: {other}")),
+    };
+    Ok(Box::new(NonceBiasAttack::new(
+        cfg.bias_min_bits,
+        cfg.bias_max_bits,
+        reduction,
+        cfg.max_samples,
+    )))
+}
+
+#[cfg(not(feature = "biased-nonce"))]
+fn build_nonce_bias(_cfg: &AnalysisConfig) -> Result<Box<dyn Attack>> {
+    Err(anyhow!(
+        "Nonce-bias attack is not available in this build. Rebuild with the `biased-nonce` feature (needs GMP/MPFR)."
+    ))
 }
 
 #[cfg(feature = "biased-nonce")]

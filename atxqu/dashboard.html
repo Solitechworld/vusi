@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATXQU // Address Transaction Query Utility</title>
+<style>
+  :root{
+    --bg:#05070a; --bg2:#0a0f18; --panel:rgba(10,16,26,.72);
+    --cyan:#00f0ff; --mag:#ff2bd6; --grn:#39ff14; --amber:#ffb020;
+    --txt:#cfe9ff; --dim:#5e7691; --line:rgba(0,240,255,.22);
+    --glow:0 0 12px rgba(0,240,255,.55);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(1200px 700px at 80% -10%, rgba(255,43,214,.10), transparent 60%),
+      radial-gradient(1000px 800px at -10% 110%, rgba(0,240,255,.10), transparent 55%),
+      var(--bg);
+    color:var(--txt);
+    font-family:'SFMono-Regular','JetBrains Mono',Menlo,Consolas,'Courier New',monospace;
+    font-size:14px; line-height:1.45; overflow-x:hidden;
+  }
+  /* animated grid floor */
+  body::before{
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),
+                     linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(circle at 50% 40%,black,transparent 78%);
+    opacity:.35; animation:drift 22s linear infinite;
+  }
+  @keyframes drift{to{background-position:0 440px,440px 0}}
+  /* scanline sweep */
+  body::after{
+    content:""; position:fixed; inset:0; z-index:2; pointer-events:none;
+    background:linear-gradient(rgba(0,240,255,0) 0,rgba(0,240,255,.05) 50%,rgba(0,240,255,0) 100%);
+    background-size:100% 6px; opacity:.5; mix-blend-mode:screen;
+    animation:scan 8s linear infinite;
+  }
+  @keyframes scan{from{background-position:0 -100vh}to{background-position:0 100vh}}
+  .wrap{position:relative; z-index:3; max-width:1180px; margin:0 auto; padding:26px 20px 60px}
+
+  header{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:20px}
+  .logo{font-weight:700; letter-spacing:3px; font-size:30px; text-transform:uppercase;
+    color:#fff; text-shadow:var(--glow); position:relative}
+  .logo b{color:var(--cyan)}
+  .logo .x{color:var(--mag); text-shadow:0 0 12px rgba(255,43,214,.6)}
+  .logo::after{content:"ATXQU"; position:absolute; left:0; top:0; color:var(--mag);
+    clip-path:inset(0 0 55% 0); transform:translate(1.5px,-1px); opacity:.5;
+    animation:glitch 3.6s infinite steps(1)}
+  @keyframes glitch{0%,92%,100%{clip-path:inset(0 0 55% 0);transform:translate(1.5px,-1px)}
+    93%{clip-path:inset(60% 0 0 0);transform:translate(-2px,1px)}
+    96%{clip-path:inset(20% 0 40% 0);transform:translate(2px,0)}}
+  .sub{color:var(--dim); letter-spacing:2px; font-size:11px; text-transform:uppercase; margin-top:4px}
+  .badge{border:1px solid var(--line); border-radius:999px; padding:5px 12px; color:var(--cyan);
+    font-size:11px; letter-spacing:1px; box-shadow:inset 0 0 12px rgba(0,240,255,.08)}
+
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    backdrop-filter:blur(6px); box-shadow:0 0 0 1px rgba(0,0,0,.4),0 18px 50px rgba(0,0,0,.55);
+    padding:18px; margin-bottom:18px}
+  .panel h2{margin:0 0 14px; font-size:12px; letter-spacing:3px; text-transform:uppercase;
+    color:var(--mag); text-shadow:0 0 10px rgba(255,43,214,.35); display:flex; gap:8px; align-items:center}
+  .panel h2::before{content:"▓"; color:var(--cyan)}
+
+  .grid{display:grid; grid-template-columns:1fr; gap:14px}
+  label{display:block; font-size:11px; letter-spacing:1px; color:var(--dim);
+    text-transform:uppercase; margin-bottom:6px}
+  input[type=text],select{
+    width:100%; background:#04080e; color:var(--txt); border:1px solid var(--line);
+    border-radius:8px; padding:12px 14px; font:inherit; outline:none; transition:.15s;
+  }
+  input[type=text]:focus,select:focus{border-color:var(--cyan); box-shadow:var(--glow)}
+  .row{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .row3{display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:14px}
+  .rangewrap{display:flex; align-items:center; gap:12px}
+  input[type=range]{flex:1; accent-color:var(--cyan)}
+  .wval{min-width:36px; text-align:right; color:var(--cyan)}
+  .hint{color:var(--dim); font-size:11px; margin-top:6px}
+  .uprow{display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap}
+  .filebtn{display:inline-flex; align-items:center; gap:8px; cursor:pointer; margin:0;
+    border:1px dashed var(--mag); color:var(--mag); border-radius:8px; padding:9px 14px;
+    font-size:12px; letter-spacing:1px; text-transform:uppercase; transition:.15s}
+  .filebtn:hover{background:rgba(255,43,214,.10); box-shadow:0 0 12px rgba(255,43,214,.35)}
+  .tiny{padding:8px 12px; font-size:11px}
+  .or{color:var(--dim); font-size:11px; letter-spacing:1px}
+
+  .chk{display:flex; align-items:center; gap:9px; color:var(--txt); font-size:12px; letter-spacing:1px; cursor:pointer; user-select:none}
+  .chk input{width:16px; height:16px; accent-color:var(--grn)}
+  .actions{display:flex; gap:12px; margin-top:16px; flex-wrap:wrap}
+  button{font:inherit; letter-spacing:2px; text-transform:uppercase; cursor:pointer;
+    border-radius:8px; padding:13px 24px; border:1px solid var(--cyan); background:transparent;
+    color:var(--cyan); position:relative; overflow:hidden; transition:.15s}
+  button:hover:not(:disabled){background:rgba(0,240,255,.12); box-shadow:var(--glow)}
+  button:disabled{opacity:.4; cursor:not-allowed}
+  button.go{border-color:var(--grn); color:var(--grn)}
+  button.go:hover:not(:disabled){background:rgba(57,255,20,.12); box-shadow:0 0 12px rgba(57,255,20,.5)}
+  button.stop{border-color:var(--mag); color:var(--mag)}
+  button.ghost{border-color:var(--dim); color:var(--dim)}
+
+  .stats{display:grid; grid-template-columns:repeat(5,1fr); gap:12px}
+  .tile{background:#04080e; border:1px solid var(--line); border-radius:10px; padding:14px 12px;
+    text-align:center; position:relative; overflow:hidden}
+  .tile .k{font-size:10px; letter-spacing:2px; color:var(--dim); text-transform:uppercase}
+  .tile .v{font-size:26px; font-weight:700; margin-top:6px; color:#fff; text-shadow:var(--glow)}
+  .tile.mag .v{color:var(--mag); text-shadow:0 0 12px rgba(255,43,214,.5)}
+  .tile.grn .v{color:var(--grn); text-shadow:0 0 12px rgba(57,255,20,.5)}
+
+  .barwrap{height:8px; background:#04080e; border:1px solid var(--line); border-radius:999px;
+    overflow:hidden; margin-top:14px}
+  .bar{height:100%; width:0; background:linear-gradient(90deg,var(--cyan),var(--mag));
+    box-shadow:var(--glow); transition:width .3s}
+  .bar.indet{width:40%; animation:indet 1.1s ease-in-out infinite}
+  @keyframes indet{0%{margin-left:-40%}100%{margin-left:100%}}
+
+  .console{background:#03060b; border:1px solid var(--line); border-radius:10px; height:190px;
+    overflow:auto; padding:12px 14px; font-size:12.5px}
+  .console div{white-space:pre-wrap; word-break:break-all}
+  .t-dim{color:var(--dim)} .t-cy{color:var(--cyan)} .t-mag{color:var(--mag)}
+  .t-gr{color:var(--grn)} .t-am{color:var(--amber)} .t-rd{color:#ff5470}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px}
+  th,td{text-align:left; padding:9px 10px; border-bottom:1px solid rgba(0,240,255,.10)}
+  th{color:var(--dim); font-size:10px; letter-spacing:1px; text-transform:uppercase; position:sticky; top:0;
+    background:var(--bg2)}
+  td.mono{color:var(--cyan); cursor:pointer}
+  td.mono:hover{text-decoration:underline}
+  td.num{text-align:right; font-variant-numeric:tabular-nums}
+  .tblwrap{max-height:360px; overflow:auto; border:1px solid var(--line); border-radius:10px}
+  .empty{color:var(--dim); text-align:center; padding:26px}
+  .dl{color:var(--grn); cursor:pointer; text-decoration:none}
+  .dl:hover{text-shadow:0 0 10px rgba(57,255,20,.6)}
+
+  /* modal */
+  .modal{position:fixed; inset:0; z-index:20; background:rgba(2,4,8,.8); backdrop-filter:blur(4px);
+    display:none; align-items:center; justify-content:center; padding:24px}
+  .modal.on{display:flex}
+  .modal .box{background:#04080e; border:1px solid var(--cyan); border-radius:12px; box-shadow:var(--glow);
+    max-width:820px; width:100%; max-height:82vh; display:flex; flex-direction:column}
+  .modal .top{display:flex; justify-content:space-between; align-items:center; padding:14px 16px;
+    border-bottom:1px solid var(--line)}
+  .modal pre{margin:0; padding:16px; overflow:auto; font-size:12px; color:var(--txt)}
+  .modal .x2{cursor:pointer; color:var(--mag); border:1px solid var(--mag); border-radius:6px;
+    padding:4px 10px}
+  .foot{color:var(--dim); font-size:11px; text-align:center; margin-top:24px; letter-spacing:1px}
+  a{color:var(--cyan)}
+  @media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}.row,.row3{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="logo"><b>AT</b><span class="x">X</span>QU</div>
+      <div class="sub">Address Transaction Query Utility · sender / spent-tx extractor</div>
+    </div>
+    <div class="badge">◇ STDLIB · NETWORK-BOUND · NO-GPU</div>
+  </header>
+
+  <!-- CONTROLS -->
+  <section class="panel">
+    <h2>Target</h2>
+    <div class="grid">
+      <div>
+        <label>Bitcoin address</label>
+        <input id="address" type="text" placeholder="e.g. 12R9pR5J3G9dqJxCcZeU8uAotGY5N5rNb1" spellcheck="false" autocomplete="off">
+        <div class="hint">Only transactions where an address is a <b>sender</b> (appears in inputs) are saved.</div>
+        <div class="uprow">
+          <label class="filebtn">⇧ Upload addresses (.txt)
+            <input id="file" type="file" accept=".txt,text/plain" hidden>
+          </label>
+          <span class="or">one address per line · # comments ignored</span>
+          <span id="filestat" class="hint" style="margin:0"></span>
+          <button class="ghost tiny" id="clearfile" style="display:none">✕ clear list</button>
+        </div>
+      </div>
+      <div class="row3">
+        <div>
+          <label>Provider</label>
+          <select id="provider">
+            <option value="blockbook">Blockbook (Atomic Wallet)</option>
+            <option value="haskoin">Haskoin-store</option>
+          </select>
+        </div>
+        <div>
+          <label>Fetch mode</label>
+          <select id="mode">
+            <option value="pages">Bulk pages (fastest)</option>
+            <option value="parallel">Parallel per-tx</option>
+          </select>
+        </div>
+        <div>
+          <label>Workers <span class="wval" id="wval">32</span></label>
+          <div class="rangewrap">
+            <input id="workers" type="range" min="1" max="128" value="32">
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Addresses at once <span class="wval" id="cval">1</span></label>
+        <div class="rangewrap">
+          <input id="conc" type="range" min="1" max="1000" value="1">
+        </div>
+        <div class="hint">Batch only — how many addresses to fetch <b>simultaneously</b>. This is thread concurrency, not GPU. <b>On a shared public endpoint keep this low (≈5–20)</b> — high values get you throttled (broken-pipe / SSL-EOF / reset errors). Crank to 1000 only against your own node or an unlimited provider. Transient drops now auto-retry with back-off.</div>
+      </div>
+      <div>
+        <label>Endpoint base URL</label>
+        <input id="baseurl" type="text" spellcheck="false" autocomplete="off">
+        <div class="hint">Auto-filled from the provider. Point it at any Blockbook / Haskoin instance you trust.</div>
+      </div>
+      <label class="chk"><input type="checkbox" id="resume" checked> Resume (skip addresses already scanned in a previous run)</label>
+    </div>
+    <div class="actions">
+      <button class="go" id="scan">▶ Scan</button>
+      <button class="ghost" id="pause" disabled>❚❚ Pause</button>
+      <button class="stop" id="stop" disabled>■ Stop</button>
+      <button class="ghost" id="clear">Clear</button>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <section class="panel">
+    <h2>Telemetry</h2>
+    <div class="stats">
+      <div class="tile"><div class="k">Scanned</div><div class="v" id="s-scanned">0</div></div>
+      <div class="tile mag"><div class="k">Senders</div><div class="v" id="s-senders">0</div></div>
+      <div class="tile grn"><div class="k">Saved</div><div class="v" id="s-saved">0</div></div>
+      <div class="tile"><div class="k">Rate /s</div><div class="v" id="s-rate">0</div></div>
+      <div class="tile"><div class="k">Elapsed</div><div class="v" id="s-elapsed">0s</div></div>
+    </div>
+    <div class="barwrap"><div class="bar" id="bar"></div></div>
+  </section>
+
+  <!-- CONSOLE -->
+  <section class="panel">
+    <h2>Stream</h2>
+    <div class="console" id="console"><div class="t-dim">// awaiting target…</div></div>
+  </section>
+
+  <!-- RESULTS -->
+  <section class="panel">
+    <h2>Spent transactions <span id="outdir" class="t-dim" style="font-size:11px;letter-spacing:1px;margin-left:6px"></span></h2>
+    <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+      <button class="ghost" id="dlall" disabled>⤓ Download combined JSON</button>
+      <span id="combinedpath" class="t-dim" style="align-self:center;font-size:11px;letter-spacing:1px"></span>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;border:1px solid rgba(180,90,255,.35);padding:10px 12px;border-radius:8px">
+      <span class="t-mag" style="font-size:12px;letter-spacing:1.5px">⚡ ANALYZE IN VUSI</span>
+      <select id="vusiAttack" title="ECDSA attack to run">
+        <option value="reuse-r">reuse-r</option>
+        <option value="nonce-reuse">nonce-reuse</option>
+        <option value="shared-nonce">shared-nonce</option>
+        <option value="delta-bias">delta-bias</option>
+        <option value="bitflip">bitflip</option>
+        <option value="gcd">gcd</option>
+        <option value="polynonce">polynonce</option>
+        <option value="biased-nonce">biased-nonce</option>
+        <option value="low-bit">low-bit</option>
+        <option value="lll">lll</option>
+        <option value="broken-nonce">broken-nonce</option>
+        <option value="nonce-bias">nonce-bias</option>
+      </select>
+      <button class="go" id="vusiBtn" disabled>Run attack</button>
+      <span id="vusiStat" class="t-dim" style="font-size:11px;letter-spacing:1px"></span>
+    </div>
+    <div id="vusiOut" style="display:none;margin-bottom:12px"></div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr>
+          <th>TxID</th><th>Address</th><th>Height</th><th>Time (UTC)</th>
+          <th class="num">Sent (BTC)</th><th class="num">Fee (sat)</th>
+          <th class="num">In/Out</th><th>JSON</th>
+        </tr></thead>
+        <tbody id="rows"><tr><td colspan="8" class="empty">No results yet — run a scan.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="foot">ATXQU · runs locally on your Mac · GPU/Metal intentionally unused (this workload is network-bound)</div>
+</div>
+
+<!-- JSON modal -->
+<div class="modal" id="modal">
+  <div class="box">
+    <div class="top">
+      <div class="t-cy" id="modal-title">tx.json</div>
+      <div class="x2" id="modal-close">CLOSE ✕</div>
+    </div>
+    <pre id="modal-body"></pre>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const ENDPOINTS = {blockbook:"https://bitcoin.atomicwallet.io/api/v2", haskoin:"https://api.haskoin.com/btc"};
+let job=null, es=null, t0=0, timer=null, saved=0, scanned=0, senders=0, total=null, rowsEl=$("rows"), firstRow=true;
+let batchAddresses=[], senderMatches=0, isBatch=false, paused=false;
+
+// init endpoint field
+function syncEndpoint(){ $("baseurl").value = ENDPOINTS[$("provider").value]; }
+$("provider").addEventListener("change", syncEndpoint); syncEndpoint();
+$("workers").addEventListener("input", e=>$("wval").textContent=e.target.value);
+$("conc").addEventListener("input", e=>$("cval").textContent=e.target.value);
+
+// ---- .txt address-list upload (parsed in-browser; only the list is sent) ----
+$("file").addEventListener("change", e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    const seen=new Set(); batchAddresses=[];
+    r.result.split(/[\r\n,;\s]+/).forEach(tok=>{
+      const a=tok.trim();
+      if(a && !a.startsWith("#") && !seen.has(a)){ seen.add(a); batchAddresses.push(a); }
+    });
+    if(batchAddresses.length){
+      let note=`<span class="t-mag">✦ ${batchAddresses.length.toLocaleString()} address(es)</span> from ${f.name}`;
+      if(batchAddresses.length>5000){
+        note+=` <span class="t-am">— large list: scanned in turn, public endpoints may rate-limit, this can take a long while</span>`;
+      }
+      $("filestat").innerHTML=note;
+      $("clearfile").style.display=""; $("address").disabled=true;
+      $("address").placeholder="using uploaded list…";
+    } else {
+      $("filestat").innerHTML=`<span class="t-rd">no valid addresses in ${f.name}</span>`;
+    }
+  };
+  r.readAsText(f);
+});
+$("clearfile").onclick=()=>{
+  batchAddresses=[]; $("file").value=""; $("filestat").textContent="";
+  $("clearfile").style.display="none"; $("address").disabled=false;
+  $("address").placeholder="e.g. 12R9pR5J3G9dqJxCcZeU8uAotGY5N5rNb1";
+};
+
+function log(msg, cls="t-dim"){
+  const c=$("console"); const d=document.createElement("div");
+  const ts=new Date().toLocaleTimeString();
+  d.className=cls; d.textContent=`[${ts}] ${msg}`;
+  c.appendChild(d); c.scrollTop=c.scrollHeight;
+}
+const sat2btc = s => (s/1e8).toLocaleString(undefined,{minimumFractionDigits:8,maximumFractionDigits:8});
+const fmtTime = t => t? new Date(t*1000).toISOString().replace("T"," ").replace(".000Z","Z") : "—";
+const shortId = h => h.slice(0,10)+"…"+h.slice(-6);
+
+function setBusy(b){
+  $("scan").disabled=b; $("stop").disabled=!b; $("pause").disabled=!b;
+  $("provider").disabled=b; $("mode").disabled=b; $("workers").disabled=b;
+  $("conc").disabled=b; $("resume").disabled=b;
+  $("baseurl").disabled=b; $("file").disabled=b; $("clearfile").disabled=b;
+  $("address").disabled = b || batchAddresses.length>0;  // stays locked while a list is loaded
+  $("bar").classList.toggle("indet", b && total===null);
+  if(!b){ paused=false; $("pause").textContent="❚❚ Pause"; $("pause").classList.remove("go"); }
+}
+function resetStats(){
+  saved=scanned=senders=senderMatches=0; total=null; firstRow=true;
+  $("s-scanned").textContent="0"; $("s-senders").textContent="0";
+  $("s-saved").textContent="0"; $("s-rate").textContent="0"; $("s-elapsed").textContent="0s";
+  $("bar").style.width="0"; $("dlall").disabled=true; $("vusiBtn").disabled=true;
+  $("vusiOut").style.display="none"; $("vusiStat").textContent="";
+  rowsEl.innerHTML='<tr><td colspan="8" class="empty">Scanning…</td></tr>';
+}
+function tick(){
+  const el=(Date.now()-t0)/1000;
+  $("s-elapsed").textContent = el<60? el.toFixed(0)+"s" : Math.floor(el/60)+"m "+Math.floor(el%60)+"s";
+  $("s-rate").textContent = el>0? (scanned/el).toFixed(1) : "0";
+}
+
+function addRow(r){
+  if(firstRow){ rowsEl.innerHTML=""; firstRow=false; }
+  const tr=document.createElement("tr");
+  tr.innerHTML=`<td class="mono" title="${r.txid}">${shortId(r.txid)}</td>
+    <td class="t-dim" title="${r.address||""}">${r.address?shortId(r.address):"—"}</td>
+    <td>${r.height ?? "mempool"}</td>
+    <td class="t-dim">${fmtTime(r.time)}</td>
+    <td class="num t-gr">${sat2btc(r.sent)}</td>
+    <td class="num">${(r.fee??0).toLocaleString()}</td>
+    <td class="num">${r.inputs}/${r.outputs}</td>
+    <td><a class="dl" href="/api/tx/${job.id}/${r.txid}?dl=1" download>⤓</a></td>`;
+  tr.querySelector("td.mono").onclick=()=>viewJson(r.txid);
+  rowsEl.prepend(tr);
+}
+
+async function viewJson(txid){
+  try{
+    const res=await fetch(`/api/tx/${job.id}/${txid}`);
+    const txt=await res.text();
+    $("modal-title").textContent=txid+".json";
+    $("modal-body").textContent=JSON.stringify(JSON.parse(txt),null,2);
+    $("modal").classList.add("on");
+  }catch(e){ log("could not load "+txid,"t-rd"); }
+}
+$("modal-close").onclick=()=>$("modal").classList.remove("on");
+$("modal").onclick=e=>{ if(e.target===$("modal")) $("modal").classList.remove("on"); };
+
+function handleEvent(ev){
+  switch(ev.type){
+    case "job_start":
+      $("outdir").textContent="→ "+ev.combined_file;
+      if(ev.skipped>0){ log(`🔄 resume: skipping ${ev.skipped.toLocaleString()} already-scanned · ${ev.to_scan.toLocaleString()} to go`,"t-cy"); }
+      if(ev.to_scan===0){ log("nothing to scan — all addresses already done","t-am"); }
+      break;
+    case "paused":
+      paused=true; $("pause").textContent="▶ Resume"; $("pause").classList.add("go");
+      $("bar").classList.add("indet"); log(`❚❚ PAUSED · ${ev.saved} saved so far`,"t-am"); break;
+    case "resumed":
+      paused=false; $("pause").textContent="❚❚ Pause"; $("pause").classList.remove("go");
+      $("bar").classList.remove("indet"); log("▶ RESUMED","t-gr"); break;
+    case "batch_mode":
+      log(`⚡ PARALLEL batch · ${ev.concurrency} addresses at once · ${ev.total.toLocaleString()} total`,"t-mag");
+      $("bar").classList.remove("indet"); $("bar").style.width="0";
+      break;
+    case "address_start":
+      if(!ev.concurrent){   // pooled mode: skip per-address logs to avoid spam
+        log(`▷ [${ev.index}/${ev.total}] scanning ${shortId(ev.address)}`,"t-cy");
+        if(isBatch){ $("bar").classList.remove("indet");
+          $("bar").style.width=((ev.index-1)/ev.total*100)+"%"; }
+      }
+      break;
+    case "addr_error":
+      log(`✖ ${shortId(ev.address)}: ${ev.message}`,"t-rd"); break;
+    case "address_done":
+      if(isBatch){ $("bar").style.width=(ev.index/ev.total*100)+"%";
+        if(ev.index%25===0 || ev.index===ev.total)
+          log(`✔ [${ev.index}/${ev.total}] addresses done · ${ev.saved} saved`,"t-dim"); }
+      break;
+    case "start": if(!isBatch) log(`▶ scan started · provider=${ev.provider} · ${shortId(ev.address)}`,"t-cy"); break;
+    case "listing": log("↻ listing transaction ids…","t-dim"); break;
+    case "listed": total=ev.total;
+      if(!isBatch){ $("bar").classList.remove("indet"); }
+      log(`✦ ${ev.total} transactions to inspect`,"t-cy"); break;
+    case "progress":
+    case "sender":
+      scanned = ev.scanned_total ?? ev.scanned;
+      $("s-scanned").textContent=scanned;
+      if(ev.type==="sender"){ senderMatches++; $("s-senders").textContent=senderMatches;
+        log(`◆ SENDER ${shortId(ev.txid)}`,"t-mag"); }
+      if(!isBatch && total){ $("bar").style.width=Math.min(100,scanned/total*100)+"%"; }
+      break;
+    case "dup":
+      log(`↺ shared tx ${shortId(ev.txid)} already saved — skipped`,"t-dim"); break;
+    case "saved":
+      saved=ev.count; $("s-saved").textContent=saved;
+      if(ev.senders_total!=null){ senderMatches=Math.max(senderMatches,ev.senders_total);
+        $("s-senders").textContent=senderMatches; }
+      log(`✓ saved ${shortId(ev.txid)}  (${sat2btc(ev.sent)} BTC)`,"t-gr");
+      break;
+    case "error": log("✖ "+ev.message,"t-rd"); break;
+    case "end":
+      const scope = ev.addresses>1 ? ` across ${ev.addresses} addresses` : "";
+      log(`■ ${ev.status.toUpperCase()} · ${ev.saved} spent tx saved${scope}`, ev.status==="done"?"t-gr":"t-am");
+      $("bar").classList.remove("indet"); $("bar").style.width="100%"; setBusy(false);
+      clearInterval(timer); tick();
+      if(saved>0){ $("dlall").disabled=false; $("vusiBtn").disabled=false; }
+      refreshResults();
+      break;
+  }
+}
+
+async function refreshResults(){
+  if(!job) return;
+  try{
+    const res=await fetch(`/api/job/${job.id}`); const data=await res.json();
+    if(data.combined_file){ $("outdir").textContent="→ "+data.combined_file;
+      $("combinedpath").textContent=data.combined_file; }
+  }catch(e){}
+}
+
+$("scan").onclick=async ()=>{
+  const address=$("address").value.trim();
+  isBatch = batchAddresses.length>0;
+  if(!isBatch && !address){ log("✖ enter an address or upload a .txt list","t-rd"); $("address").focus(); return; }
+  const body={ provider:$("provider").value, base_url:$("baseurl").value,
+    mode:$("mode").value, workers:parseInt($("workers").value,10),
+    concurrency:parseInt($("conc").value,10), resume:$("resume").checked };
+  if(isBatch){ body.addresses=batchAddresses; } else { body.address=address; }
+  resetStats(); $("console").innerHTML=""; setBusy(true); t0=Date.now();
+  if(isBatch) log(`⇧ batch mode · ${batchAddresses.length} addresses`,"t-mag");
+  timer=setInterval(tick,500);
+  try{
+    const res=await fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(body)});
+    const data=await res.json();
+    if(data.error){ log("✖ "+data.error,"t-rd"); setBusy(false); clearInterval(timer); return; }
+    job=data; $("outdir").textContent="→ "+(data.combined_file||data.outdir);
+    log(`job ${data.job_id} · mode=${data.mode} · workers=${data.workers}`,"t-dim");
+    es=new EventSource(`/api/stream/${data.job_id}`);
+    es.onmessage=e=>{ const ev=JSON.parse(e.data); handleEvent(ev);
+      if(ev.type==="saved"){ // pull row detail from snapshot
+        fetch(`/api/job/${job.id}`).then(r=>r.json()).then(j=>{
+          const r=j.results[j.results.length-1]; if(r) addRow(r);
+        });
+      }
+      if(ev.type==="end"){ es.close(); }
+    };
+    es.onerror=()=>{ log("stream closed","t-dim"); es.close(); };
+  }catch(e){ log("✖ "+e.message,"t-rd"); setBusy(false); clearInterval(timer); }
+};
+
+$("pause").onclick=async ()=>{ if(!job) return;
+  const ep = paused ? "resume" : "pause";
+  await fetch(`/api/${ep}/${job.id}`,{method:"POST"});
+  if(!paused) log("❚❚ pause requested","t-am"); };
+$("stop").onclick=async ()=>{ if(job){ await fetch(`/api/stop/${job.id}`,{method:"POST"}); log("↯ stop requested","t-am"); } };
+$("clear").onclick=()=>{ $("console").innerHTML='<div class="t-dim">// cleared</div>';
+  rowsEl.innerHTML='<tr><td colspan="8" class="empty">No results yet — run a scan.</td></tr>';
+  $("s-scanned").textContent="0";$("s-senders").textContent="0";$("s-saved").textContent="0";
+  $("s-rate").textContent="0";$("s-elapsed").textContent="0s";$("bar").style.width="0";$("outdir").textContent=""; };
+$("dlall").onclick=()=>{ if(job) window.location=`/api/combined/${job.id}`; };
+
+function esc(s){ return String(s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function renderVusi(data){
+  const out=$("vusiOut"); out.style.display="";
+  if(data.error){
+    out.innerHTML=`<div class="t-am" style="padding:10px;border:1px solid rgba(255,170,0,.4);border-radius:8px">
+      ⚠ ${esc(data.error)}</div>`;
+    return;
+  }
+  const rep=data.report||{}, sum=rep.summary||{}, vulns=rep.vulnerabilities||[];
+  let html=`<div style="padding:10px 12px;border:1px solid rgba(120,230,180,.35);border-radius:8px">
+    <div class="t-cy" style="letter-spacing:1px;margin-bottom:6px">vusi · ${esc(data.attack)}
+      <span class="t-dim" style="font-size:11px">— ${sum.total_signatures||0} sigs · ${sum.vulnerabilities_found||0} vulns · ${sum.keys_recovered||0} keys</span></div>`;
+  if(!vulns.length){
+    html+=`<div class="t-dim">No vulnerabilities found.</div>`;
+  } else {
+    for(const v of vulns){
+      const k=v.recovered_key;
+      html+=`<div style="margin:8px 0;padding:8px;border-top:1px solid rgba(255,255,255,.08)">
+        <div class="t-mag">${esc(v.type)} · confidence ${v.confidence} · ${v.signatures_count} sigs</div>`;
+      if(v.pubkey) html+=`<div class="t-dim" style="font-size:11px;word-break:break-all">pubkey ${esc(v.pubkey)}</div>`;
+      if(k){
+        html+=`<div class="t-grn" style="margin-top:4px">🔑 recovered key</div>
+          <div style="word-break:break-all;font-size:12px">hex: <code>${esc(k.private_key_hex)}</code></div>
+          <div style="word-break:break-all;font-size:12px">dec: <code>${esc(k.private_key_decimal)}</code>
+            <button class="ghost tiny" onclick="navigator.clipboard.writeText('${esc(k.private_key_hex)}')">⧉ copy hex</button></div>`;
+      } else {
+        html+=`<div class="t-am" style="font-size:12px">not recovered${v.recovery_reason?` — ${esc(v.recovery_reason)}`:""}</div>`;
+      }
+      html+=`</div>`;
+    }
+  }
+  html+=`</div>`;
+  out.innerHTML=html;
+}
+
+$("vusiBtn").onclick=async ()=>{
+  if(!job) return;
+  const attack=$("vusiAttack").value;
+  $("vusiBtn").disabled=true; $("vusiStat").textContent="running…";
+  log(`⚡ vusi: running ${attack} on collected transactions…`,"t-mag");
+  try{
+    const res=await fetch(`/api/analyze/${job.id}`,{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({attack})});
+    const data=await res.json();
+    renderVusi(data);
+    if(data.error){ log(`vusi: ${data.error}`,"t-am"); $("vusiStat").textContent="error"; }
+    else{
+      const sum=(data.report&&data.report.summary)||{};
+      log(`vusi: ${sum.vulnerabilities_found||0} vulns · ${sum.keys_recovered||0} keys recovered`,
+          (sum.keys_recovered>0)?"t-grn":"t-dim");
+      $("vusiStat").textContent=`${sum.total_signatures||0} sigs analyzed`;
+    }
+  }catch(e){
+    renderVusi({error:String(e)}); log(`vusi request failed: ${e}`,"t-am");
+    $("vusiStat").textContent="error";
+  }finally{ $("vusiBtn").disabled=false; }
+};
+$("address").addEventListener("keydown",e=>{ if(e.key==="Enter") $("scan").click(); });
+</script>
+</body>
+</html>

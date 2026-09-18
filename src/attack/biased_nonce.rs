@@ -519,6 +519,89 @@ fn verify_candidate(d: &Scalar, sigs: &[Signature], pubkey: &Option<String>) -> 
     true
 }
 
+
+// ===========================================================================
+// Nonce-bias ("Bias SR") — generic MSB bias with automatic known-bit sweep
+// ===========================================================================
+
+/// Generic **nonce-bias** attack for the common case where the nonces are
+/// biased in their most-significant bits (e.g. leading zeros from a truncated
+/// or modulo-reduced RNG) but the exact number of biased bits is unknown.
+///
+/// Unlike [`BiasedNonceAttack`], which takes a fixed `known_bits`, this mode
+/// sweeps a range of MSB bias widths and returns the first that recovers the
+/// key. It is the "just detect the bias" entry point: point it at a set of
+/// same-key signatures and let it search.
+pub struct NonceBiasAttack {
+    /// MSB bias widths to try, inclusive range `[min_bits, max_bits]`.
+    min_bits: usize,
+    max_bits: usize,
+    reduction: ReductionAlgorithm,
+    max_samples: Option<usize>,
+}
+
+impl NonceBiasAttack {
+    pub fn new(
+        min_bits: usize,
+        max_bits: usize,
+        reduction: ReductionAlgorithm,
+        max_samples: Option<usize>,
+    ) -> Self {
+        let lo = min_bits.clamp(1, 255);
+        let hi = max_bits.clamp(lo, 255);
+        Self {
+            min_bits: lo,
+            max_bits: hi,
+            reduction,
+            max_samples,
+        }
+    }
+}
+
+impl Default for NonceBiasAttack {
+    fn default() -> Self {
+        // Sweep 1..=16 leading biased bits with plain LLL by default.
+        Self::new(1, 16, ReductionAlgorithm::Lll, None)
+    }
+}
+
+impl Attack for NonceBiasAttack {
+    fn name(&self) -> &'static str {
+        "nonce-bias"
+    }
+
+    fn min_signatures(&self) -> usize {
+        // Fewest signatures any width in the sweep might need.
+        BiasedNonceAttack::new(BiasType::Msb, self.max_bits, self.reduction, self.max_samples)
+            .min_signatures()
+    }
+
+    fn detect(&self, signatures: &[Signature]) -> Vec<Vulnerability> {
+        // Same grouping as the MSB attack at the widest (cheapest-to-satisfy) width.
+        let widest =
+            BiasedNonceAttack::new(BiasType::Msb, self.max_bits, self.reduction, self.max_samples);
+        widest
+            .detect(signatures)
+            .into_iter()
+            .map(|mut v| {
+                v.attack_type = self.name().to_string();
+                v
+            })
+            .collect()
+    }
+
+    fn recover(&self, vuln: &Vulnerability) -> Option<RecoveredKey> {
+        for bits in (self.min_bits..=self.max_bits).rev() {
+            let attack =
+                BiasedNonceAttack::new(BiasType::Msb, bits, self.reduction, self.max_samples);
+            if let Some(key) = attack.recover(vuln) {
+                return Some(key);
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

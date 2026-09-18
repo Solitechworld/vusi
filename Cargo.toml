@@ -15,7 +15,7 @@ categories = ["cryptography", "command-line-utilities"]
 
 [dependencies]
 # Cryptography
-k256 = { version = "0.13", features = ["arithmetic"] }
+k256 = { version = "0.13", features = ["arithmetic", "ecdsa"] }
 
 # Decimal conversion
 num-bigint = "0.4"
@@ -35,6 +35,7 @@ csv = "1.3"
 
 # Utilities
 hex = "0.4"
+sha2 = "0.10"
 
 # Lattice reduction
 rug = { version = "1.24", optional = true }
