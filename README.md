@@ -111,6 +111,28 @@ cargo test
 cargo build --release
 ```
 
+## Funding
+
+Donations support a separate, unreleased project I am building, aimed at
+Bitcoin. It is my conviction and my bet to make, not a claim to take on trust —
+judge it when there is something to judge. This tool stays free either way.
+
+```
+bitcoin:1Be6LLAEndprdWKiH6YM62setFQRXJzfha
+```
+
+`1Be6LLAEndprdWKiH6YM62setFQRXJzfha` — mainnet P2PKH.
+
+**Verify before you send.** This repository is about analysing ECDSA
+signatures, which makes a donation address in it an attractive thing for
+someone to quietly swap in a fork or a pull request. Before sending anything
+you would mind losing, open an issue and ask me to confirm the address, and
+compare the first and last four characters (`1Be6` … `zfha`) against the reply.
+
+Nothing here is an investment offer and no return of any kind is implied.
+
 ## License
 
-MIT
+This project is a fork of [oritwoen/vusi](https://github.com/oritwoen/vusi).
+Original work © 2026 oritwoen, MIT. Additions in this fork are likewise MIT.
+See [LICENSE](LICENSE).
