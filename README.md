@@ -1,6 +1,6 @@
 # vusi
 
-> **Fork.** Based on [oritwoen/vusi](https://github.com/oritwoen/vusi) (MIT). This copy adds a native, Metal-accelerated desktop GUI (`gui/`), a macOS `.app` bundle, and Bitcoin raw-transaction → `(r, s, z, pubkey)` extraction. Upstream copyright is retained in [LICENSE](LICENSE).
+> **Fork.** Based on [oritwoen/vusi](https://github.com/oritwoen/vusi) (MIT). This copy adds a native, Metal-accelerated desktop GUI (`gui/`), a macOS `.app` bundle, the `vusi-engine` shared analysis crate, and Bitcoin raw-transaction → `(r, s, z, pubkey)` extraction. Upstream copyright is retained in [LICENSE](LICENSE).
 
 ![vusi — ECDSA Signature Vulnerability Analyzer](assets/screenshot.png)
 
@@ -19,12 +19,32 @@ ECDSA signature vulnerability analysis library and CLI tool.
 > and autosave. Launch it with `cargo run -p vusi-gui --release` or by
 > double-clicking `run-gui.command`. See [gui/README.md](gui/README.md).
 
-## Features
+## What it does
 
-- **Nonce Reuse Detection**: Identifies signatures using the same nonce (k value)
-- **Private Key Recovery**: Recovers private keys from vulnerable signatures
-- **Multiple Input Formats**: Supports JSON and CSV input
-- **Flexible Output**: Human-readable or JSON output formats
+`vusi` is a multi-tool for ECDSA signature-vulnerability analysis: it audits a
+set of signatures you already hold and, for any that are broken by a nonce
+weakness, recovers the private key. Three independent attack classes:
+
+- **Nonce reuse** — signatures sharing a nonce (identical `r`). Two are enough
+  to recover the key algebraically.
+- **Polynonce** — polynomial relationships between successive nonces
+  (configurable degree: linear, quadratic, …), recovered from a chain of
+  signatures.
+- **Biased nonce (HNP)** — nonces with systematic bias (known LSBs, known MSBs,
+  or a restricted range) solved as a Hidden Number Problem via lattice
+  reduction (LLL, or windowed-LLL with tunable block size and rounds). Needs
+  4+ signatures.
+
+Around those:
+
+- **Bitcoin transaction extraction** — pull `(r, s, z, pubkey)` straight from a
+  raw Bitcoin transaction: it parses the DER signature out of each input's
+  scriptSig, derives the sighash `z`, and hands the tuples to the analyzer.
+- **Three ways to drive it** — a CLI (`vusi analyze`), a native Metal GUI
+  (`gui/`), and a library (`vusi-engine`) that both front-ends share, so every
+  interface gives identical results.
+- **JSON or CSV in**, human-readable or JSON out; batch a folder or watch one
+  continuously (GUI).
 
 ## Installation
 
