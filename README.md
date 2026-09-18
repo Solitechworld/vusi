@@ -212,6 +212,9 @@ cargo build --release
 
 ## Funding
 
+
+[<img src="assets/donate.svg" alt="Donate Bitcoin — 1Be6LLAEndprdWKiH6YM62setFQRXJzfha" width="440">](https://mempool.space/address/1Be6LLAEndprdWKiH6YM62setFQRXJzfha)
+
 Donations support a separate, unreleased project I am building, aimed at
 Bitcoin. It is my conviction and my bet to make, not a claim to take on trust —
 judge it when there is something to judge. This tool stays free either way.
