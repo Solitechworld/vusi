@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sisyphus
+.sisyphus/
+
+CLAUDE.md
+
+# macOS app bundle built by bundle-macos.sh — a build artefact, not source.
+Vusi.app/
+
+# 42 MB working dataset (116k ECDSA signatures). Analysis input, not source;
+# kept local rather than shipped in the repo.
+rsz.json
+*.reports/
+vusi-reports/

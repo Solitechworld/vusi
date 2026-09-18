@@ -1,0 +1,44 @@
+[package]
+name = "vusi-gui"
+version = "0.2.0"
+edition = "2021"
+description = "Cyberspace GUI for the vusi ECDSA signature-vulnerability analyzer"
+license = "MIT"
+
+[[bin]]
+name = "vusi-gui"
+path = "src/main.rs"
+
+[dependencies]
+vusi-engine = { path = "../engine" }
+
+# Native, GPU-accelerated immediate-mode GUI.
+# The `wgpu` backend selects Metal automatically on Apple Silicon / T2 Macs.
+eframe = { version = "0.28", default-features = false, features = [
+    "wgpu",
+    "default_fonts",
+    # Linux windowing backends (no-ops on macOS/Windows, where the native
+    # backend is always compiled). Kept so the app builds on Linux too.
+    "x11",
+    "wayland",
+] }
+egui = "0.28"
+egui_extras = { version = "0.28", default-features = false }
+
+# Native file/folder dialogs. On Linux we use the desktop portal (no GTK
+# system libs); on macOS this is ignored and the native Cocoa panel is used.
+rfd = { version = "0.14", default-features = false, features = [
+    "xdg-portal",
+    "tokio",
+] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[features]
+# Biased-nonce lattice attack (needs GMP/MPFR on the host). On by default;
+# build with `--no-default-features` to drop it if GMP isn't available.
+default = ["biased-nonce"]
+biased-nonce = ["vusi-engine/biased-nonce"]
