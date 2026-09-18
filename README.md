@@ -1,5 +1,15 @@
 # vusi
 
+<img src="assets/banner.svg" alt="vusi — ECDSA signature vulnerability analyzer" width="100%">
+
+<p>
+<img src="https://img.shields.io/badge/platform-macOS%2011%2B-00d9d9?style=flat-square&labelColor=07090f" alt="macOS 11+">
+<img src="https://img.shields.io/badge/GPU-Metal-00d9d9?style=flat-square&labelColor=07090f" alt="Metal">
+<img src="https://img.shields.io/badge/lang-Rust-00d9d9?style=flat-square&labelColor=07090f" alt="Rust">
+<img src="https://img.shields.io/badge/licence-MIT-8b96a8?style=flat-square&labelColor=07090f" alt="MIT">
+</p>
+
+
 > **Fork.** Based on [oritwoen/vusi](https://github.com/oritwoen/vusi) (MIT) — the CLI, library and attack engines. This fork adds a native Metal GUI (`gui/`), the shared `vusi-engine` crate, Bitcoin raw-transaction → `(r, s, z, pubkey)` extraction, the **ATXQU** address-transaction pipeline (`atxqu/`), and macOS `.app` packaging. Upstream copyright is retained in [LICENSE](LICENSE).
 
 ![vusi — ECDSA Signature Vulnerability Analyzer](assets/screenshot.png)
@@ -48,6 +58,14 @@ Selected with `--attack <name>`:
 | `lll`           | HNP with known nonce **MSBs** via LLL (alias of `biased-nonce --bias-type msb`) | 4+ sigs |
 | `broken-nonce`  | weak-RNG / range-bounded nonce (alias of `biased-nonce --bias-type range`) | 4+ sigs |
 | `nonce-bias`    | generic MSB bias, **auto-sweeps** the known-bit width (`--bias-min-bits`, `--bias-max-bits`) | 4+ sigs |
+
+> **Added in this fork.** Upstream [oritwoen/vusi](https://github.com/oritwoen/vusi)
+> ships `nonce-reuse`, `polynonce` and `biased-nonce`. The **related-nonce family** —
+> `shared-nonce`, `reuse-r`, `delta-bias`, `bitflip` (single-bit nonce fault),
+> `gcd` (unknown affine relation) and the auto-sweeping `nonce-bias` mode, all
+> built on the affine two-nonce solver in `src/attack/related_nonce.rs` — is added
+> here, along with the Metal GUI, the `vusi-engine` crate, the ATXQU pipeline and
+> Bitcoin transaction extraction.
 
 The `delta-bias`, `bitflip` and `gcd` modes share one closed-form
 [two-affinely-related-nonce solver](https://eprint.iacr.org/2025/705)
