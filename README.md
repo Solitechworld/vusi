@@ -2,6 +2,10 @@
 
 > **Fork.** Based on [oritwoen/vusi](https://github.com/oritwoen/vusi) (MIT). This copy adds a native, Metal-accelerated desktop GUI (`gui/`), a macOS `.app` bundle, and Bitcoin raw-transaction → `(r, s, z, pubkey)` extraction. Upstream copyright is retained in [LICENSE](LICENSE).
 
+![vusi — ECDSA Signature Vulnerability Analyzer](assets/screenshot.png)
+
+*The native Metal GUI: load a signature set or extract `(r, s, z, pubkey)` from a raw Bitcoin transaction, pick an attack vector, and run — nonce reuse, biased nonce, polynonce. Rendered through Metal on Apple Silicon / T2.*
+
 [![Crates.io](https://img.shields.io/crates/v/vusi?style=flat&colorA=130f40&colorB=474787)](https://crates.io/crates/vusi)
 [![Downloads](https://img.shields.io/crates/d/vusi?style=flat&colorA=130f40&colorB=474787)](https://crates.io/crates/vusi)
 [![License](https://img.shields.io/crates/l/vusi?style=flat&colorA=130f40&colorB=474787)](LICENSE)
