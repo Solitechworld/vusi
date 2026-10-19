@@ -1,0 +1,4 @@
+{
+  "name": "vusi Rust & Python Container",
+  "build": { "dockerfile": "../Dockerfile" }
+}
